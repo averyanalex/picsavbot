@@ -85,6 +85,7 @@ async fn _main() -> Result<()> {
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![db, ai, translator])
         .enable_ctrlc_handler()
+        .worker_queue_size(2)
         .build()
         .dispatch()
         .await;
