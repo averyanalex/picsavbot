@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [".", "migration", "entities"]
+
+[package]
+name = "picsavbot"
+authors = ["Alexander Averyanov <alex@averyan.ru>"]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+sea-orm = { version = "0.12", features = [
+    "sqlx-postgres",
+    "postgres-array",
+    "runtime-tokio-native-tls",
+    "macros",
+] }
+tokio = { version = "1.35", features = ["full"] }
+
+[dependencies]
+anyhow = "1.0"
+sentry = "0.32.1"
+sentry-anyhow = "0.32.1"
+sentry-tracing = "0.32.1"
+teloxide = { version = "0.12.2", features = [
+    "ctrlc_handler",
+    "throttle",
+    "macros",
+] }
+migration = { path = "migration" }
+entities = { path = "entities" }
+tokio.workspace = true
+sea-orm.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+reqwest = "0.11.24"
+serde = { version = "1.0.196", features = ["derive"] }
+serde_json = "1.0.113"

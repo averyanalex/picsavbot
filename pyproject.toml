@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "picsavai"
+version = "0.1.0"
+description = ""
+authors = ["Alexander Averyanov <alex@averyan.ru>"]
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+fastapi = "^0.109.2"
+uvicorn = "^0.27.0.post1"
+python-multipart = "^0.0.7"
+pillow = "^10.2.0"
+pydantic = "^2.6.0"
+
+torchvision = { version = "0.17.0", source = "torch" }
+torch = {version = "^2.2.0+cpu", source = "torch"}
+transformers = "^4.37.2"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.12.0"
+
+[[tool.poetry.source]]
+name = "torch"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "supplemental"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
