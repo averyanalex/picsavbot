@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
         let db = manager.get_connection();
         db.execute(Statement::from_string(
             DatabaseBackend::Postgres,
-            "CREATE EXTENSION vector;",
+            "CREATE EXTENSION IF NOT EXISTS vector;",
         ))
         .await?;
 
