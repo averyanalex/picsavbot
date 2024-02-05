@@ -84,7 +84,7 @@ impl Db {
             .column(images::Column::FileId)
             .filter(images::Column::UserId.eq(user))
             .order_by_asc(images::Column::Embedding.into_simple_expr().binary(
-                BinOper::Custom("<->"),
+                BinOper::Custom("<=>"),
                 SimpleExpr::from(embedding).cast_as(Alias::new("vector")),
             ))
             .limit(50)
@@ -106,5 +106,25 @@ impl Db {
             .all(&self.dc)
             .await?;
         Ok(res)
+    }
+
+    pub async fn get_all_images(&self) -> Result<Vec<ImageWithIds>> {
+        let res = Images::find()
+            .select_only()
+            .column(images::Column::Id)
+            .column(images::Column::FileId)
+            .into_model::<ImageWithIds>()
+            .all(&self.dc)
+            .await?;
+        Ok(res)
+    }
+
+    pub async fn update_image(&self, id: i32, embedding: Vec<f32>) -> Result<()> {
+        Images::update_many()
+            .col_expr(images::Column::Embedding, embedding.into())
+            .filter(images::Column::Id.eq(id))
+            .exec(&self.dc)
+            .await?;
+        Ok(())
     }
 }

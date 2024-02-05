@@ -25,6 +25,7 @@ async def image_embeddings(files: list[UploadFile]):
 
     inputs = processor(images=images, return_tensors="pt", padding=True)
     features = model.get_image_features(**inputs)
+    features = features / features.norm(p=2, dim=-1, keepdim=True)
 
     return EmbeddingsResponse(embeddings=features)
 
@@ -37,4 +38,6 @@ class TextRequest(BaseModel):
 async def text_embeddings(req: TextRequest) -> EmbeddingsResponse:
     inputs = processor(text=req.texts, return_tensors="pt", padding=True)
     features = model.get_text_features(**inputs)
+    features = features / features.norm(p=2, dim=-1, keepdim=True)
+
     return EmbeddingsResponse(embeddings=features)

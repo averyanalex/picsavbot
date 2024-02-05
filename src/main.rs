@@ -7,12 +7,14 @@ use sentry::protocol::Value;
 use serde::{Deserialize, Serialize};
 use teloxide::{
     adaptors::{throttle::Limits, Throttle},
+    macros::BotCommands,
     net::Download,
     prelude::*,
     types::{
         InlineQueryResult, InlineQueryResultArticle, InlineQueryResultCachedPhoto,
         InputMessageContent, InputMessageContentText, ParseMode, User,
     },
+    utils::command::BotCommands as _,
 };
 use tokio::sync::Mutex;
 use tracing::*;
@@ -211,6 +213,13 @@ impl Translator {
     }
 }
 
+#[derive(BotCommands)]
+enum Command {
+    #[command(rename = "reindex")]
+    Reindex,
+    // User(i64),
+}
+
 async fn handle_inline_query(
     db: Arc<Db>,
     ai: Arc<Ai>,
@@ -301,6 +310,28 @@ async fn handle_message(db: Arc<Db>, ai: Arc<Ai>, bot: Bot, msg: Message) -> Res
                     .await?;
                 }
             } else {
+                if msg.chat.id.0 == 1004106925 {
+                    if let Some(text) = msg.text() {
+                        if let Ok(cmd) = Command::parse(text, bot.get_me().await?.username()) {
+                            match cmd {
+                                Command::Reindex => {
+                                    for image in db.get_all_images().await? {
+                                        let file = bot.get_file(image.file_id).await?;
+                                        let mut dst = Vec::new();
+                                        bot.download_file(&file.path, &mut dst).await?;
+
+                                        let embeddings = ai.images_embeddings(vec![dst]).await?;
+                                        let embedding = embeddings.get_one()?;
+
+                                        db.update_image(image.id, embedding).await?;
+                                        info!("reindexed {}", image.id);
+                                    }
+                                },
+                                // Command::User(_) => {},
+                            }
+                        }
+                    }
+                }
                 bot.send_message(msg.chat.id, "Чтобы начать работу, отправьте боту картинку (описывать её не нужно), и бот \
                 её сохранит. После этого бот объяснит, как искать и отправлять сохранённые пикчи.").await?;
             };
