@@ -77,7 +77,12 @@ impl Db {
         Ok(res.rows_affected >= 1)
     }
 
-    pub async fn search_images(&self, user: i64, embedding: Vec<f32>) -> Result<Vec<ImageWithIds>> {
+    pub async fn search_images(
+        &self,
+        user: i64,
+        embedding: Vec<f32>,
+        offset: Option<u64>,
+    ) -> Result<Vec<ImageWithIds>> {
         let res = Images::find()
             .select_only()
             .column(images::Column::Id)
@@ -87,21 +92,27 @@ impl Db {
                 BinOper::Custom("<=>"),
                 SimpleExpr::from(embedding).cast_as(Alias::new("vector")),
             ))
-            .limit(50)
+            .limit(51)
+            .offset(offset)
             .into_model::<ImageWithIds>()
             .all(&self.dc)
             .await?;
         Ok(res)
     }
 
-    pub async fn get_latest_images(&self, user: i64) -> Result<Vec<ImageWithIds>> {
+    pub async fn get_latest_images(
+        &self,
+        user: i64,
+        offset: Option<u64>,
+    ) -> Result<Vec<ImageWithIds>> {
         let res = Images::find()
             .select_only()
             .column(images::Column::Id)
             .column(images::Column::FileId)
             .filter(images::Column::UserId.eq(user))
             .order_by_desc(images::Column::CreationTime)
-            .limit(50)
+            .limit(51)
+            .offset(offset)
             .into_model::<ImageWithIds>()
             .all(&self.dc)
             .await?;

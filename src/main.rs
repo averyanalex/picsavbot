@@ -1,4 +1,10 @@
-use std::{collections::BTreeMap, env, future::Future, str::FromStr, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    future::Future,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{Context, Result};
 use db::Db;
@@ -16,7 +22,7 @@ use teloxide::{
     },
     utils::command::BotCommands as _,
 };
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::*;
 use tracing_subscriber::prelude::*;
 
@@ -85,7 +91,7 @@ async fn _main() -> Result<()> {
     Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![db, ai, translator])
         .enable_ctrlc_handler()
-        .worker_queue_size(2)
+        // .worker_queue_size(2)
         .build()
         .dispatch()
         .await;
@@ -96,7 +102,7 @@ async fn _main() -> Result<()> {
 #[derive(Default)]
 struct Ai {
     client: Client,
-    lock: Mutex<()>,
+    lock: AsyncMutex<()>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -161,6 +167,7 @@ struct Translator {
     ycl_api_key: String,
     ycl_folder: String,
     client: Client,
+    cache: Mutex<HashMap<String, String>>,
 }
 
 impl Translator {
@@ -169,15 +176,16 @@ impl Translator {
             ycl_api_key: env::var("YCL_API_KEY")?,
             ycl_folder: env::var("YCL_FOLDER")?,
             client: Client::new(),
+            cache: Mutex::default(),
         })
     }
 
-    async fn translate(&self, texts: Vec<String>) -> Result<Vec<String>> {
+    async fn translate(&self, text: String) -> Result<String> {
         #[derive(Serialize)]
         #[serde(rename_all = "camelCase")]
         struct TranslateRequest {
             folder_id: String,
-            texts: Vec<String>,
+            texts: [String; 1],
             target_language_code: String,
             source_language_code: String,
             speller: bool,
@@ -185,7 +193,7 @@ impl Translator {
 
         #[derive(Deserialize)]
         struct TranslateResponse {
-            translations: Vec<Translation>,
+            translations: [Translation; 1],
         }
 
         #[derive(Deserialize)]
@@ -193,24 +201,31 @@ impl Translator {
             text: String,
         }
 
-        let res: TranslateResponse = self
-            .client
-            .post("https://translate.api.cloud.yandex.net/translate/v2/translate")
-            .header("Authorization", format!("Api-Key {}", self.ycl_api_key))
-            .json(&TranslateRequest {
-                folder_id: self.ycl_folder.clone(),
-                texts,
-                target_language_code: "en".into(),
-                source_language_code: "ru".into(),
-                speller: true,
-            })
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let cached_translation = self.cache.lock().unwrap().get(&text).cloned();
+        if let Some(translation) = cached_translation {
+            Ok(translation)
+        } else {
+            let res: TranslateResponse = self
+                .client
+                .post("https://translate.api.cloud.yandex.net/translate/v2/translate")
+                .header("Authorization", format!("Api-Key {}", self.ycl_api_key))
+                .json(&TranslateRequest {
+                    folder_id: self.ycl_folder.clone(),
+                    texts: [text.clone()],
+                    target_language_code: "en".into(),
+                    source_language_code: "ru".into(),
+                    speller: true,
+                })
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
 
-        Ok(res.translations.into_iter().map(|t| t.text).collect())
+            let translation = res.translations.into_iter().map(|t| t.text).next().unwrap();
+            self.cache.lock().unwrap().insert(text, translation.clone());
+            Ok(translation)
+        }
     }
 }
 
@@ -229,33 +244,36 @@ async fn handle_inline_query(
     query: InlineQuery,
 ) -> Result<()> {
     try_handle(&query.from, &bot, async {
+        let offset: Option<u64> = if let Ok(offset) = query.offset.parse() {
+            Some(offset)
+        } else {
+            None
+        };
+
         let images: Vec<_> = if query.query.is_empty() {
-            db.get_latest_images(query.from.id.0.try_into().unwrap())
+            db.get_latest_images(query.from.id.0.try_into().unwrap(), offset)
                 .await?
         } else {
-            let translated_text = translator
-                .translate(vec![query.query])
-                .await?
-                .into_iter()
-                .next()
-                .context("empty texts")?;
+            let translated_text = translator.translate(query.query).await?;
 
             let embeddings = ai.text_embeddings(vec![translated_text]).await?;
             let embedding = embeddings.get_one()?;
 
-            db.search_images(query.from.id.0.try_into().unwrap(), embedding)
+            db.search_images(query.from.id.0.try_into().unwrap(), embedding, offset)
                 .await?
         };
 
+        let images_len = images.len();
         let results: Vec<_> = images
             .into_iter()
+            .take(50)
             .map(|i| InlineQueryResultCachedPhoto::new(i.id.to_string(), i.file_id.clone()))
             .map(InlineQueryResult::CachedPhoto)
             .collect();
 
         if results.is_empty() {
             bot.answer_inline_query(
-                query.id,
+                query.id.clone(),
                 vec![InlineQueryResult::Article(
                     InlineQueryResultArticle::new(
                         "howtouse",
@@ -267,12 +285,21 @@ async fn handle_inline_query(
                     .description("Напишите боту @picsavbot, чтобы начать работу"),
                 )],
             )
+            .switch_pm_text("Чтобы начать работу, сохраните в @picsavbot несколько изображений")
+            .switch_pm_parameter(query.id)
             .cache_time(0)
             .await?;
         } else {
-            bot.answer_inline_query(query.id, results)
-                .cache_time(0)
-                .await?;
+            let mut req = bot.answer_inline_query(query.id, results).cache_time(0);
+            if images_len >= 51 {
+                let new_offset = if let Some(offset) = offset {
+                    offset + 50
+                } else {
+                    50
+                };
+                req = req.next_offset(new_offset.to_string());
+            }
+            req.await?;
         }
 
         db.update_user(query.from.id.0.try_into().unwrap()).await?;
