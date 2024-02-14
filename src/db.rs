@@ -1,5 +1,5 @@
 use anyhow::Result;
-use entities::{images, prelude::*, users};
+use entities::{images, prelude::*, sea_orm_active_enums::MediaType, users};
 use migration::{Alias, BinOper, Migrator, MigratorTrait, SimpleExpr};
 use sea_orm::{
     prelude::*, ActiveValue, ConnectOptions, Database, DatabaseConnection, EntityTrait,
@@ -10,6 +10,7 @@ use tracing::log::LevelFilter;
 #[derive(FromQueryResult)]
 pub struct ImageWithIds {
     pub id: i32,
+    pub media_type: MediaType,
     pub file_id: String,
 }
 
@@ -56,9 +57,11 @@ impl Db {
         embedding: Vec<f32>,
         file_id: String,
         unique_id: String,
+        media_type: MediaType,
     ) -> Result<()> {
         let image = images::ActiveModel {
             user_id: ActiveValue::Set(user),
+            media_type: ActiveValue::Set(media_type),
             file_id: ActiveValue::Set(file_id),
             unique_id: ActiveValue::Set(unique_id),
             embedding: ActiveValue::Set(embedding),
@@ -86,6 +89,7 @@ impl Db {
         let res = Images::find()
             .select_only()
             .column(images::Column::Id)
+            .column(images::Column::MediaType)
             .column(images::Column::FileId)
             .filter(images::Column::UserId.eq(user))
             .order_by_asc(images::Column::Embedding.into_simple_expr().binary(
@@ -108,6 +112,7 @@ impl Db {
         let res = Images::find()
             .select_only()
             .column(images::Column::Id)
+            .column(images::Column::MediaType)
             .column(images::Column::FileId)
             .filter(images::Column::UserId.eq(user))
             .order_by_desc(images::Column::CreationTime)
@@ -123,6 +128,7 @@ impl Db {
         let res = Images::find()
             .select_only()
             .column(images::Column::Id)
+            .column(images::Column::MediaType)
             .column(images::Column::FileId)
             .into_model::<ImageWithIds>()
             .all(&self.dc)

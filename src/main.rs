@@ -18,13 +18,16 @@ use teloxide::{
     prelude::*,
     types::{
         InlineQueryResult, InlineQueryResultArticle, InlineQueryResultCachedPhoto,
-        InputMessageContent, InputMessageContentText, ParseMode, User,
+        InlineQueryResultCachedSticker, InputMessageContent, InputMessageContentText, ParseMode,
+        User,
     },
     utils::command::BotCommands as _,
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::*;
 use tracing_subscriber::prelude::*;
+
+use entities::sea_orm_active_enums::MediaType;
 
 mod db;
 
@@ -132,7 +135,7 @@ impl Ai {
 
         let req = self
             .client
-            .post("http://127.0.0.1:8526/images")
+            .post("http://whale:8526/images")
             .multipart(form)
             .send()
             .await?
@@ -152,7 +155,7 @@ impl Ai {
 
         let res = self
             .client
-            .post("http://127.0.0.1:8526/texts")
+            .post("http://whale:8526/texts")
             .json(&TextRequest { texts })
             .send()
             .await?
@@ -267,8 +270,14 @@ async fn handle_inline_query(
         let results: Vec<_> = images
             .into_iter()
             .take(50)
-            .map(|i| InlineQueryResultCachedPhoto::new(i.id.to_string(), i.file_id.clone()))
-            .map(InlineQueryResult::CachedPhoto)
+            .map(|i| match i.media_type {
+                MediaType::Photo => InlineQueryResult::CachedPhoto(
+                    InlineQueryResultCachedPhoto::new(i.id.to_string(), i.file_id),
+                ),
+                MediaType::Sticker => InlineQueryResult::CachedSticker(
+                    InlineQueryResultCachedSticker::new(i.id.to_string(), i.file_id),
+                ),
+            })
             .collect();
 
         if results.is_empty() {
@@ -313,24 +322,38 @@ async fn handle_message(db: Arc<Db>, ai: Arc<Ai>, bot: Bot, msg: Message) -> Res
         try_handle(from, &bot, async {
             db.update_user(msg.chat.id.0).await?;
 
-            if let Some([.., photo]) = msg.photo() {
-                if db.delete_image(msg.chat.id.0, photo.file.unique_id.clone()).await? {
+            #[allow(clippy::manual_map)]
+            if let Some((media_type, file)) = if let Some([.., photo]) = msg.photo() {
+                Some((MediaType::Photo, photo.file.clone()))
+            } else if let Some(sticker) = msg.sticker() {
+                if sticker.is_raster() {
+                    Some((MediaType::Sticker, sticker.file.clone()))
+                } else {
+                    bot.send_message(msg.chat.id, "В данный момент возможно сохранение только обычных, неанимированных стикеров")
+                        .reply_to_message_id(msg.id)
+                        .await?;
+                    return Ok(());
+                }
+            } else {
+                None
+            } {
+                if db.delete_image(msg.chat.id.0, file.unique_id.clone()).await? {
                     bot.send_message(msg.chat.id, "Изображение удалено!").reply_to_message_id(msg.id).await?;
                 } else {
-                    let file = bot.get_file(&photo.file.id).await?;
+                    let file = bot.get_file(&file.id).await?;
                     let mut dst = Vec::new();
                     bot.download_file(&file.path, &mut dst).await?;
 
                     let embeddings = ai.images_embeddings(vec![dst]).await?;
                     let embedding = embeddings.get_one()?;
 
-                    db.create_image(msg.chat.id.0, embedding, photo.file.id.clone(), photo.file.unique_id.clone())
+                    db.create_image(msg.chat.id.0, embedding, file.id.clone(), file.unique_id.clone(), media_type)
                         .await?;
 
                     bot.send_message(
                         msg.chat.id,
-                        "Ваше изображение сохранено\\!\n\nТеперь вы можете найти и \
-                    отправить его, написав `@picsavbot \\[описание изображения по-русски\\]` в любом чате\\.\n\nЧтобы удалить изображение, \
+                        "Ваше изображение/стикер сохранено\\!\n\nТеперь вы можете найти и \
+                    отправить его, написав `@picsavbot \\[описание изображения по-русски\\]` в любом чате\\.\n\nА чтобы его удалить, \
                     отправьте его ещё раз с помощью `@picsavbot \\[описание изображения по-русски\\]`\\.",
                     )
                     .parse_mode(ParseMode::MarkdownV2)
@@ -354,14 +377,18 @@ async fn handle_message(db: Arc<Db>, ai: Arc<Ai>, bot: Bot, msg: Message) -> Res
                                         db.update_image(image.id, embedding).await?;
                                         info!("reindexed {}", image.id);
                                     }
-                                },
+                                }
                                 // Command::User(_) => {},
                             }
                         }
                     }
                 }
-                bot.send_message(msg.chat.id, "Чтобы начать работу, отправьте боту картинку (описывать её не нужно), и бот \
-                её сохранит. После этого бот объяснит, как искать и отправлять сохранённые пикчи.").await?;
+                bot.send_message(
+                    msg.chat.id,
+                    "Чтобы начать работу, отправьте боту картинку или стикер, и бот \
+                её сохранит. После этого бот объяснит, как искать и отправлять сохранённые пикчи и стикеры.",
+                )
+                .await?;
             };
             Ok(())
         })

@@ -81,10 +81,11 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum Images {
+pub enum Images {
     Table,
     Id,
     UserId,
+    MediaType,
     FileId,
     UniqueId,
     CreationTime,
