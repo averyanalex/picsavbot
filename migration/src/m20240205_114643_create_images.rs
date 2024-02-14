@@ -85,6 +85,7 @@ pub enum Images {
     Table,
     Id,
     UserId,
+    UsesCount,
     MediaType,
     FileId,
     UniqueId,

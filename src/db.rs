@@ -51,6 +51,19 @@ impl Db {
         Ok(())
     }
 
+    pub async fn increment_image_uses(&self, image: i32, user: i64) -> Result<()> {
+        Images::update_many()
+            .col_expr(
+                images::Column::UsesCount,
+                images::Column::UsesCount.into_simple_expr().add(1),
+            )
+            .filter(images::Column::Id.eq(image))
+            .filter(images::Column::UserId.eq(user))
+            .exec(&self.dc)
+            .await?;
+        Ok(())
+    }
+
     pub async fn create_image(
         &self,
         user: i64,
@@ -104,7 +117,7 @@ impl Db {
         Ok(res)
     }
 
-    pub async fn get_latest_images(
+    pub async fn get_most_used_images(
         &self,
         user: i64,
         offset: Option<u64>,
@@ -115,6 +128,7 @@ impl Db {
             .column(images::Column::MediaType)
             .column(images::Column::FileId)
             .filter(images::Column::UserId.eq(user))
+            .order_by_desc(images::Column::UsesCount)
             .order_by_desc(images::Column::CreationTime)
             .limit(51)
             .offset(offset)

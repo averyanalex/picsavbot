@@ -15,6 +15,7 @@ pub struct Model {
     #[sea_orm(column_type = "custom(\"vector\")")]
     pub embedding: Vec<f32>,
     pub media_type: MediaType,
+    pub uses_count: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

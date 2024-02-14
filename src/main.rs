@@ -85,6 +85,9 @@ async fn _main() -> Result<()> {
 
     let handler = dptree::entry()
         .branch(Update::filter_message().branch(dptree::endpoint(handle_message)))
+        .branch(
+            Update::filter_chosen_inline_result().branch(dptree::endpoint(handle_chosen_inline)),
+        )
         .branch(Update::filter_inline_query().branch(dptree::endpoint(handle_inline_query)));
 
     let db = Arc::new(Db::new().await?);
@@ -135,7 +138,7 @@ impl Ai {
 
         let req = self
             .client
-            .post("http://whale:8526/images")
+            .post("http://127.0.0.1:8526/images")
             .multipart(form)
             .send()
             .await?
@@ -155,7 +158,7 @@ impl Ai {
 
         let res = self
             .client
-            .post("http://whale:8526/texts")
+            .post("http://127.0.0.1:8526/texts")
             .json(&TextRequest { texts })
             .send()
             .await?
@@ -254,7 +257,7 @@ async fn handle_inline_query(
         };
 
         let images: Vec<_> = if query.query.is_empty() {
-            db.get_latest_images(query.from.id.0.try_into().unwrap(), offset)
+            db.get_most_used_images(query.from.id.0.try_into().unwrap(), offset)
                 .await?
         } else {
             let translated_text = translator.translate(query.query).await?;
@@ -315,6 +318,14 @@ async fn handle_inline_query(
         Ok(())
     })
     .await
+}
+
+async fn handle_chosen_inline(db: Arc<Db>, chosen: ChosenInlineResult) -> Result<()> {
+    if let Ok(image) = chosen.result_id.parse() {
+        db.increment_image_uses(image, chosen.from.id.0.try_into().unwrap())
+            .await?;
+    }
+    Ok(())
 }
 
 async fn handle_message(db: Arc<Db>, ai: Arc<Ai>, bot: Bot, msg: Message) -> Result<()> {
