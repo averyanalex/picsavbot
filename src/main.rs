@@ -18,8 +18,8 @@ use teloxide::{
     prelude::*,
     types::{
         InlineQueryResult, InlineQueryResultArticle, InlineQueryResultCachedPhoto,
-        InlineQueryResultCachedSticker, InputMessageContent, InputMessageContentText, ParseMode,
-        User,
+        InlineQueryResultCachedSticker, InlineQueryResultCachedVideo, InputMessageContent,
+        InputMessageContentText, ParseMode, User,
     },
     utils::command::BotCommands as _,
 };
@@ -280,6 +280,13 @@ async fn handle_inline_query(
                 MediaType::Sticker => InlineQueryResult::CachedSticker(
                     InlineQueryResultCachedSticker::new(i.id.to_string(), i.file_id),
                 ),
+                MediaType::Video => {
+                    InlineQueryResult::CachedVideo(InlineQueryResultCachedVideo::new(
+                        i.id.to_string(),
+                        i.file_id,
+                        i.id.to_string(),
+                    ))
+                }
             })
             .collect();
 
@@ -334,31 +341,50 @@ async fn handle_message(db: Arc<Db>, ai: Arc<Ai>, bot: Bot, msg: Message) -> Res
             db.update_user(msg.chat.id.0).await?;
 
             #[allow(clippy::manual_map)]
-            if let Some((media_type, file)) = if let Some([.., photo]) = msg.photo() {
-                Some((MediaType::Photo, photo.file.clone()))
+            if let Some((media_type, real_file, photo_file)) = if let Some([.., photo]) = msg.photo() {
+                Some((MediaType::Photo, photo.file.clone(), photo.file.clone()))
+            } else if let Some(video) = msg.video() {
+                match &video.thumb {
+                    Some(thumb) => {
+                        Some((MediaType::Video, video.file.clone(), thumb.file.clone()))
+                    },
+                    None => {
+                        bot.send_message(msg.chat.id, "У этого видео нет изображения-предпросмотра.")
+                            .reply_to_message_id(msg.id)
+                            .await?;
+                        return Ok(());
+                    }
+                }
             } else if let Some(sticker) = msg.sticker() {
                 if sticker.is_raster() {
-                    Some((MediaType::Sticker, sticker.file.clone()))
+                    Some((MediaType::Sticker, sticker.file.clone(), sticker.file.clone()))
                 } else {
-                    bot.send_message(msg.chat.id, "В данный момент возможно сохранение только обычных, неанимированных стикеров")
-                        .reply_to_message_id(msg.id)
-                        .await?;
-                    return Ok(());
+                    match &sticker.thumb {
+                        Some(thumb) => {
+                            Some((MediaType::Sticker, sticker.file.clone(), thumb.file.clone()))
+                        },
+                        None => {
+                            bot.send_message(msg.chat.id, "У этого анимированного стикера нет изображения-предпросмотра.")
+                                .reply_to_message_id(msg.id)
+                                .await?;
+                            return Ok(());
+                        }
+                    }
                 }
             } else {
                 None
             } {
-                if db.delete_image(msg.chat.id.0, file.unique_id.clone()).await? {
+                if db.delete_image(msg.chat.id.0, real_file.unique_id.clone()).await? {
                     bot.send_message(msg.chat.id, "Изображение удалено!").reply_to_message_id(msg.id).await?;
                 } else {
-                    let file = bot.get_file(&file.id).await?;
+                    let file = bot.get_file(&photo_file.id).await?;
                     let mut dst = Vec::new();
                     bot.download_file(&file.path, &mut dst).await?;
 
                     let embeddings = ai.images_embeddings(vec![dst]).await?;
                     let embedding = embeddings.get_one()?;
 
-                    db.create_image(msg.chat.id.0, embedding, file.id.clone(), file.unique_id.clone(), media_type)
+                    db.create_image(msg.chat.id.0, embedding, real_file.id, real_file.unique_id, media_type)
                         .await?;
 
                     bot.send_message(

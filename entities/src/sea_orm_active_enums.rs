@@ -9,4 +9,6 @@ pub enum MediaType {
     Photo,
     #[sea_orm(string_value = "sticker")]
     Sticker,
+    #[sea_orm(string_value = "video")]
+    Video,
 }

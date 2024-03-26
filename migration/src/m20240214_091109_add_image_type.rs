@@ -56,8 +56,9 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(Iden, EnumIter)]
-enum MediaType {
+pub enum MediaType {
     Table,
     Photo,
     Sticker,
+    Video,
 }
